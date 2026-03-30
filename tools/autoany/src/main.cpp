@@ -51,8 +51,7 @@ Doc Tags:
     @class [name]               Indicate the beginning of the class, that is, the current class needs to be reflected.
     @struct [name]              Indicate the beginning of the structure, that is, the current structure needs to be reflected.
     @inherit [name]             Indicate which base class the class inherits from, and there can be multiple.
-    @enum [name]                Represents enumeration.
-    @enum_item [name]           There can be multiple items representing enumeration, one per line.
+    @enum [name]                Represents enumeration. Supports enum/enum class and DEF_ENUM*/DEF_ENUM_FLAGS* macros.
     @cast_to [type]             The enumeration value needs to be type converted to the specified type.
     @construct                  Represents a constructor.
     @default_construct          Indicates the existence of a default constructor, which can be directly commented in the blank space within the class without the need for a function declaration below.
@@ -65,9 +64,8 @@ Doc Tags:
     @pack_again [type]          Repackaging the property will be done using REF_PROPERTY_RW.
     @constant [name]            Represents a constant.
     @cpp_name [name]            List the CPP type names of the enumeration class.
-    @def_enum                   It is a label specific to DEF_ENUM_N and DEF_ENUM_FLAGS_N.
     @ref_code                   Custom reflection code blocks are written after @ ref_comde line breaks, supporting multiple lines, and will be inserted into the reflection function as is.
-    @alias                      Ex: @alias NewName = OldName.
+    @alias                      Type alias: @alias NewName = OldName. Function/property alias: @alias AliasName.
 )TXT";
 
 static void printUsage(const char *name)
@@ -148,7 +146,7 @@ int32_t parseFile(GFile &file, FileReflecInfo &info)
     refCode << "#include <gx/gany.h>\n";
     refCode << "#include <" << sIncludePrefix << srcShortPath << ">\n";
     if (!typesInfo.includeFromSet.empty()) {
-        for (const auto &i : typesInfo.includeFromSet) {
+        for (const auto &i: typesInfo.includeFromSet) {
             refCode << "#include \"" << i << "\"\n";
         }
     }
@@ -156,7 +154,7 @@ int32_t parseFile(GFile &file, FileReflecInfo &info)
 
     if (!typesInfo.cppNamespace.empty()) {
         auto nss = GString(typesInfo.cppNamespace).split("::");
-        for (const auto &i : nss) {
+        for (const auto &i: nss) {
             refCode << "using namespace " << i << ";\n";
         }
     }

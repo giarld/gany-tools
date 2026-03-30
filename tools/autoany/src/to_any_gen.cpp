@@ -121,98 +121,149 @@ std::string ToAnyGen::genReflecClassCode(const ClassInfo &classInfo)
 
     // property
     for (const auto &p: classInfo.properties) {
-        if (p->hasGetter || p->hasSetter) {
-            code << "\n    .property(" << formatString(p->name) << ", ";
-            if (p->hasGetter) {
-                code << "&" << cppClassName << "::" << p->getter->name;
-            } else {
-                code << "GAny()";
+        genPropertyBinding(code, cppClassName, *p, p->name, true);
+        for (const auto &alias: p->aliases) {
+            if (alias.empty() || alias == p->name) {
+                continue;
             }
-            code << ", ";
-            if (p->hasSetter) {
-                code << "&" << cppClassName << "::" << p->setter->name;
-            } else {
-                code << "GAny()";
-            }
-            code << ", " << formatString(p->doc);
-            code << ")";
-        } else if (p->packAgain) {
-            code <<"\n    REF_PROPERTY_RW(" << cppClassName << ", " << p->type << ", " << p->name << ", " << formatString(p->doc) << ")";
-        } else {
-            code << "\n    .readWrite(" << formatString(p->name) << ", &" << cppClassName << "::" << p->name
-                << ", " << formatString(p->doc)
-                << ")";
+            genPropertyBinding(code, cppClassName, *p, alias, false);
         }
     }
 
     // func && staticFunc
     for (const auto &func: classInfo.funcs) {
-        bool hasOverloads = func->overloads.size() > 1;
-
         for (size_t i = 0; i < func->overloads.size(); i++) {
             const auto &overload = func->overloads[i];
-
             std::string funcName = func->name.empty() ? overload.name : func->name;
+            genFuncBinding(code, cppClassName, *func, funcName, i, true);
 
-            if (func->isStatic) {
-                code << "\n    .staticFunc(";
-            } else {
-                code << "\n    .func(";
-            }
-
-            if (func->isMetaFunc) {
-                code << "MetaFunction::" << funcName << ", ";
-            } else {
-                code << formatString(funcName) << ", ";
-            }
-
-            if (!hasOverloads) {
-                code << "&" << cppClassName << "::" << overload.name;
-            } else {
-                code << "[](";
-                if (!func->isStatic) {
-                    code << cppClassName << " &self";
-                }
-                for (size_t k = 0; k < overload.argsNames.size(); k++) {
-                    if (k != 0 || !func->isStatic) {
-                        code << ", ";
+            if (!func->isMetaFunc) {
+                for (const auto &alias: func->aliases) {
+                    if (alias.empty() || alias == funcName) {
+                        continue;
                     }
-                    code << overload.argTypes[k] << " " << overload.argsNames[k];
+                    genFuncBinding(code, cppClassName, *func, alias, i, false);
                 }
-                code << ") {\n";
-                code << "        ";
-                if (overload.retType != "void") {
-                    code << "return ";
-                }
-                if (!func->isStatic) {
-                    code << "self.";
-                } else {
-                    code << cppClassName << "::";
-                }
-                code << overload.name << "(";
-                for (size_t k = 0; k < overload.argsNames.size(); k++) {
-                    if (k != 0) {
-                        code << ", ";
-                    }
-                    code << overload.argsNames[k];
-                }
-                code << ");\n";
-                code << "    }";
             }
-            code << ", ";
-            genFuncDoc(code, *func, i);
-            code << ")";
         }
     }
 
     code << ";";
 
-    for (const auto &e : interEnumInfos) {
+    for (const auto &e: interEnumInfos) {
         code << "\n\n";
         code << genReflecEnumClassCode(e);
     }
 
     return code.str();
+}
+
+void ToAnyGen::genPropertyBinding(std::stringstream &code,
+                                  const std::string &cppClassName,
+                                  const PropertyInfo &propertyInfo,
+                                  const std::string &propertyName,
+                                  bool withDoc)
+{
+    if (propertyInfo.hasGetter || propertyInfo.hasSetter) {
+        code << "\n    .property(" << formatString(propertyName) << ", ";
+        if (propertyInfo.hasGetter) {
+            code << "&" << cppClassName << "::" << propertyInfo.getter->name;
+        } else {
+            code << "GAny()";
+        }
+        code << ", ";
+        if (propertyInfo.hasSetter) {
+            code << "&" << cppClassName << "::" << propertyInfo.setter->name;
+        } else {
+            code << "GAny()";
+        }
+        if (withDoc) {
+            code << ", " << formatString(propertyInfo.doc);
+        }
+        code << ")";
+    } else if (propertyInfo.packAgain) {
+        code << "\n    .property(" << formatString(propertyName) << ", "
+            << "[](const " << cppClassName << " &self) -> " << propertyInfo.type << " {\n"
+            << "        return self." << propertyInfo.name << ";\n"
+            << "    }, "
+            << "[](" << cppClassName << " &self, const " << propertyInfo.type << " &v) {\n"
+            << "        self." << propertyInfo.name << " = v;\n"
+            << "    }";
+        if (withDoc) {
+            code << ", " << formatString(propertyInfo.doc);
+        }
+        code << ")";
+    } else {
+        code << "\n    .readWrite(" << formatString(propertyName) << ", &" << cppClassName << "::" << propertyInfo.name;
+        if (withDoc) {
+            code << ", " << formatString(propertyInfo.doc);
+        }
+        code << ")";
+    }
+}
+
+void ToAnyGen::genFuncBinding(std::stringstream &code,
+                              const std::string &cppClassName,
+                              const FuncInfo &funcInfo,
+                              const std::string &funcName,
+                              size_t overloadIndex,
+                              bool withDoc)
+{
+    const auto &overload = funcInfo.overloads[overloadIndex];
+    const bool hasOverloads = funcInfo.overloads.size() > 1;
+
+    if (funcInfo.isStatic) {
+        code << "\n    .staticFunc(";
+    } else {
+        code << "\n    .func(";
+    }
+
+    if (funcInfo.isMetaFunc) {
+        code << "MetaFunction::" << funcName;
+    } else {
+        code << formatString(funcName);
+    }
+    code << ", ";
+
+    if (!hasOverloads) {
+        code << "&" << cppClassName << "::" << overload.name;
+    } else {
+        code << "[](";
+        if (!funcInfo.isStatic) {
+            code << cppClassName << " &self";
+        }
+        for (size_t k = 0; k < overload.argsNames.size(); k++) {
+            if (k != 0 || !funcInfo.isStatic) {
+                code << ", ";
+            }
+            code << overload.argTypes[k] << " " << overload.argsNames[k];
+        }
+        code << ") {\n";
+        code << "        ";
+        if (overload.retType != "void") {
+            code << "return ";
+        }
+        if (!funcInfo.isStatic) {
+            code << "self.";
+        } else {
+            code << cppClassName << "::";
+        }
+        code << overload.name << "(";
+        for (size_t k = 0; k < overload.argsNames.size(); k++) {
+            if (k != 0) {
+                code << ", ";
+            }
+            code << overload.argsNames[k];
+        }
+        code << ");\n";
+        code << "    }";
+    }
+
+    if (withDoc) {
+        code << ", ";
+        genFuncDoc(code, funcInfo, overloadIndex);
+    }
+    code << ")";
 }
 
 std::string ToAnyGen::genReflecEnumClassCode(const EnumClassInfo &enumClsInfo)

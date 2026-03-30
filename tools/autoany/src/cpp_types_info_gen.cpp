@@ -1,8 +1,10 @@
-//
+﻿//
 // Created by Gxin on 25-4-29.
 //
 
 #include "cpp_types_info_gen.h"
+#include "gx/gstring.h"
+#include <algorithm>
 #include <sstream>
 #include <iostream>
 #include <cctype>
@@ -49,6 +51,241 @@ static std::string unpackMacroSignature(const std::string &sig)
         }
     }
     return sig;
+}
+
+static void appendUnique(std::vector<std::string> &values, const std::string &value)
+{
+    if (value.empty()) {
+        return;
+    }
+    if (std::find(values.begin(), values.end(), value) == values.end()) {
+        values.push_back(value);
+    }
+}
+
+static bool parseAliasMapping(const std::string &aliasValue, std::string &newName, std::string &oldName)
+{
+    auto splits = GString(aliasValue).split('=');
+    if (splits.size() != 2) {
+        return false;
+    }
+
+    newName = trim(splits[0].toStdString());
+    oldName = trim(splits[1].toStdString());
+    return !newName.empty() && !oldName.empty();
+}
+
+static std::string captureDeclarationBlock(std::istringstream &input, const std::string &firstLine, bool stopAtBodyBegin = false)
+{
+    std::string block;
+    int braceDepth = 0;
+    bool seenBrace = false;
+    bool bodyBeginReached = false;
+
+    auto appendLine = [&](const std::string &codeLine) {
+        if (!block.empty()) {
+            block += ' ';
+        }
+        block += codeLine;
+        for (char ch: codeLine) {
+            if (ch == '{') {
+                if (stopAtBodyBegin && !seenBrace) {
+                    bodyBeginReached = true;
+                }
+                ++braceDepth;
+                seenBrace = true;
+            } else if (ch == '}') {
+                --braceDepth;
+            }
+        }
+    };
+
+    if (!trim(firstLine).empty()) {
+        appendLine(trim(firstLine));
+    }
+
+    while (true) {
+        const std::string trimmedBlock = trim(block);
+        if (bodyBeginReached ||
+            (!seenBrace && trimmedBlock.find(';') != std::string::npos) ||
+            (seenBrace && braceDepth <= 0 && trimmedBlock.find(';') != std::string::npos)) {
+            break;
+        }
+
+        std::string line;
+        if (!std::getline(input, line)) {
+            break;
+        }
+
+        std::string codeLine = trim(line);
+        if (codeLine.empty()) {
+            continue;
+        }
+        if (codeLine.starts_with("///") || codeLine.starts_with("/**")) {
+            break;
+        }
+
+        appendLine(codeLine);
+    }
+
+    std::string normalized;
+    bool inSpace = false;
+    for (const char ch: block) {
+        if (std::isspace(static_cast<unsigned char>(ch))) {
+            if (!inSpace) {
+                normalized += ' ';
+                inSpace = true;
+            }
+        } else {
+            normalized += ch;
+            inSpace = false;
+        }
+    }
+    return trim(normalized);
+}
+
+static std::vector<std::string> extractEnumItemsFromDeclaration(const std::string &enumDecl)
+{
+    std::vector<std::string> items;
+
+    const size_t bodyBegin = enumDecl.find('{');
+    const size_t bodyEnd = enumDecl.rfind('}');
+    if (bodyBegin == std::string::npos || bodyEnd == std::string::npos || bodyBegin >= bodyEnd) {
+        return items;
+    }
+
+    const std::string body = enumDecl.substr(bodyBegin + 1, bodyEnd - bodyBegin - 1);
+    std::string current;
+    int parenDepth = 0;
+    int angleDepth = 0;
+    int braceDepth = 0;
+    int bracketDepth = 0;
+
+    auto flushItem = [&]() {
+        std::string text = trim(current);
+        current.clear();
+        if (text.empty()) {
+            return;
+        }
+
+        size_t eqPos = std::string::npos;
+        int localParen = 0;
+        int localAngle = 0;
+        int localBrace = 0;
+        int localBracket = 0;
+        for (size_t i = 0; i < text.size(); ++i) {
+            const char ch = text[i];
+            switch (ch) {
+                case '(':
+                    ++localParen;
+                    break;
+                case ')':
+                    --localParen;
+                    break;
+                case '<':
+                    ++localAngle;
+                    break;
+                case '>':
+                    --localAngle;
+                    break;
+                case '{':
+                    ++localBrace;
+                    break;
+                case '}':
+                    --localBrace;
+                    break;
+                case '[':
+                    ++localBracket;
+                    break;
+                case ']':
+                    --localBracket;
+                    break;
+                case '=':
+                    if (localParen == 0 && localAngle == 0 && localBrace == 0 && localBracket == 0) {
+                        eqPos = i;
+                    }
+                    break;
+                default:
+                    break;
+            }
+            if (eqPos != std::string::npos) {
+                break;
+            }
+        }
+
+        if (eqPos != std::string::npos) {
+            text = trim(text.substr(0, eqPos));
+        }
+
+        if (text.empty()) {
+            return;
+        }
+
+        size_t end = text.size();
+        while (end > 0 && !isIdentChar(text[end - 1])) {
+            --end;
+        }
+
+        size_t start = end;
+        while (start > 0 && isIdentChar(text[start - 1])) {
+            --start;
+        }
+
+        if (start < end) {
+            appendUnique(items, text.substr(start, end - start));
+        }
+    };
+
+    for (char ch: body) {
+        switch (ch) {
+            case '(':
+                ++parenDepth;
+                break;
+            case ')':
+                --parenDepth;
+                break;
+            case '<':
+                ++angleDepth;
+                break;
+            case '>':
+                --angleDepth;
+                break;
+            case '{':
+                ++braceDepth;
+                break;
+            case '}':
+                --braceDepth;
+                break;
+            case '[':
+                ++bracketDepth;
+                break;
+            case ']':
+                --bracketDepth;
+                break;
+            case ',':
+                if (parenDepth == 0 && angleDepth == 0 && braceDepth == 0 && bracketDepth == 0) {
+                    flushItem();
+                    continue;
+                }
+                break;
+            default:
+                break;
+        }
+        current += ch;
+    }
+    flushItem();
+
+    return items;
+}
+
+static std::string extractDefEnumNameFromDeclaration(const std::string &decl)
+{
+    static const std::regex defEnumRegex(R"(^\s*DEF_ENUM(?:_FLAGS)?_\d+\s*\(\s*([A-Za-z_]\w*))");
+    std::smatch match;
+    if (std::regex_search(decl, match, defEnumRegex)) {
+        return match.str(1);
+    }
+    return "";
 }
 
 //=======================================================
@@ -144,6 +381,27 @@ std::vector<std::string> CppTypesInfoGen::extractCommentBlocks(const std::string
         return trimmed;
     };
 
+    auto maybeAppendEnumMetadata = [&](std::string &commentText, const std::string &enumDecl) {
+        if (commentText.find("@enum") == std::string::npos ||
+            commentText.find("@def_enum") != std::string::npos) {
+            return;
+        }
+
+        const std::string defEnumName = extractDefEnumNameFromDeclaration(enumDecl);
+        if (!defEnumName.empty()) {
+            commentText += "@def_enum " + defEnumName + "\n";
+            return;
+        }
+
+        if (commentText.find("@enum_item") != std::string::npos) {
+            return;
+        }
+
+        for (const auto &enumItem: extractEnumItemsFromDeclaration(enumDecl)) {
+            commentText += "@enum_item " + enumItem + "\n";
+        }
+    };
+
     while (std::getline(input, line)) {
         std::string trimmed = trim(line);
 
@@ -189,7 +447,6 @@ std::vector<std::string> CppTypesInfoGen::extractCommentBlocks(const std::string
                     current += trimmed.substr(3) + "\n";
                 } else {
                     inBlock = false;
-                    // current已经收集完所有 /// 注释行了，准备提取函数签名
                     bool needFuncSig = current.find("@construct") != std::string::npos ||
                                        current.find("@func") != std::string::npos ||
                                        current.find("@static_func") != std::string::npos ||
@@ -198,42 +455,20 @@ std::vector<std::string> CppTypesInfoGen::extractCommentBlocks(const std::string
                     bool hasBeginScope = false;
                     bool hasEndScope = false;
                     if (needFuncSig) {
-                        std::string funcSig;
-                        funcSig += trimmed + " "; // 当前行（不是///）也属于函数签名一部分
+                        std::string funcSig = captureDeclarationBlock(input, trimmed, true);
                         if (funcSig.find('{') != std::string::npos) {
                             hasBeginScope = true;
                         }
                         if (funcSig.find('}') != std::string::npos) {
                             hasEndScope = true;
                         }
-
-                        if (funcSig.find(';') == std::string::npos ||
-                            funcSig.find('{') == std::string::npos) {
-                            while (std::getline(input, line)) {
-                                std::string codeLine = trim(line);
-                                if (codeLine.empty())
-                                    continue;
-                                if (codeLine.starts_with("///") || codeLine.starts_with("/**"))
-                                    break;
-                                funcSig += codeLine + " ";
-                                if (codeLine.find(';') != std::string::npos ||
-                                    codeLine.find('{') != std::string::npos) {
-                                    if (codeLine.find('{') != std::string::npos) {
-                                        hasBeginScope = true;
-                                    }
-                                    if (codeLine.find('}') != std::string::npos) {
-                                        hasEndScope = true;
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-
-                        funcSig = normalizeFunctionSignature(funcSig);
                         if (!funcSig.empty()) {
                             current += "@func_sig " + funcSig + "\n";
                         }
                     } else {
+                        if (current.find("@enum") != std::string::npos) {
+                            maybeAppendEnumMetadata(current, captureDeclarationBlock(input, trimmed));
+                        }
                         for (const char ch: trimmed) {
                             if (ch == '{') {
                                 hasBeginScope = true;
@@ -255,7 +490,6 @@ std::vector<std::string> CppTypesInfoGen::extractCommentBlocks(const std::string
                 }
             }
 
-            // doc注释 /** */ 情况，注释结束后也要处理函数签名
             if (!inBlock && isDocComment && !current.empty()) {
                 bool needFuncSig = current.find("@construct") != std::string::npos ||
                                    current.find("@func") != std::string::npos ||
@@ -265,28 +499,19 @@ std::vector<std::string> CppTypesInfoGen::extractCommentBlocks(const std::string
                 bool hasBeginScope = false;
                 bool hasEndScope = false;
                 if (needFuncSig) {
-                    std::string funcSig;
-                    while (std::getline(input, line)) {
-                        std::string codeLine = trim(line);
-                        if (codeLine.empty())
-                            continue;
-                        if (codeLine.starts_with("///") || codeLine.starts_with("/**"))
-                            break;
-                        funcSig += codeLine + " ";
-                        if (codeLine.find(';') != std::string::npos ||
-                            codeLine.find('{') != std::string::npos) {
-                            if (codeLine.find('{') != std::string::npos) {
-                                hasBeginScope = true;
-                            }
-                            if (codeLine.find('}') != std::string::npos) {
-                                hasEndScope = true;
-                            }
-                            break;
-                        }
+                    std::string funcSig = captureDeclarationBlock(input, "", true);
+                    if (funcSig.find('{') != std::string::npos) {
+                        hasBeginScope = true;
                     }
-                    funcSig = normalizeFunctionSignature(funcSig);
+                    if (funcSig.find('}') != std::string::npos) {
+                        hasEndScope = true;
+                    }
                     if (!funcSig.empty()) {
                         current += "@func_sig " + funcSig + "\n";
+                    }
+                } else {
+                    if (current.find("@enum") != std::string::npos) {
+                        maybeAppendEnumMetadata(current, captureDeclarationBlock(input, ""));
                     }
                 }
 
@@ -429,7 +654,7 @@ FuncSigInfo CppTypesInfoGen::parseFunctionSignature(const std::string &signature
 TypesInfo CppTypesInfoGen::assembleTypesInfo(const std::vector<ParsedItem> &parsedItems)
 {
     std::vector<std::shared_ptr<ClassInfo> > classes;
-    std::vector<std::shared_ptr<EnumClassInfo>> enumClasses;
+    std::vector<std::shared_ptr<EnumClassInfo> > enumClasses;
     std::vector<ClassInfo *> classStack;
     std::vector<std::string> scopeStack;
     std::map<std::string, PropertyInfo *> propertyMap;
@@ -599,14 +824,13 @@ TypesInfo CppTypesInfoGen::assembleTypesInfo(const std::vector<ParsedItem> &pars
             currentClass->constants.push_back(constantInfo);
         }
 
-        if (tagMap.contains("alias")) {
-            GString alias = tagMap["alias"];
-            auto splits = alias.split('=');
-            if (splits.size() == 2) {
-                std::string newName = trim(splits[0].toStdString());
-                std::string oldName = trim(splits[1].toStdString());
-
-                currentClass->aliases[newName] = oldName;
+        for (const auto &tag: item.tags) {
+            if (tag.tag == "alias") {
+                std::string newName;
+                std::string oldName;
+                if (parseAliasMapping(tag.value, newName, oldName)) {
+                    currentClass->aliases[newName] = oldName;
+                }
             }
         }
 
@@ -636,6 +860,12 @@ TypesInfo CppTypesInfoGen::assembleTypesInfo(const std::vector<ParsedItem> &pars
             if (tagMap.contains("pack_again")) {
                 prop->packAgain = true;
                 prop->type = tagMap["pack_again"];
+            }
+
+            for (const auto &tag: item.tags) {
+                if (tag.tag == "alias") {
+                    appendUnique(prop->aliases, trim(tag.value));
+                }
             }
 
             currentClass->properties.push_back(prop);
@@ -672,6 +902,13 @@ TypesInfo CppTypesInfoGen::assembleTypesInfo(const std::vector<ParsedItem> &pars
                 }
             }
 
+            const bool isPropertyAccessor = tagMap.contains("property_get") || tagMap.contains("property_set");
+            for (const auto &tag: item.tags) {
+                if (tag.tag == "alias") {
+                    appendUnique(func->aliases, trim(tag.value));
+                }
+            }
+
             if (tagMap.contains("construct")) {
                 currentClass->constructs.push_back(func);
             } else {
@@ -689,13 +926,16 @@ TypesInfo CppTypesInfoGen::assembleTypesInfo(const std::vector<ParsedItem> &pars
                             existing->overloads.end(),
                             func->overloads.begin(),
                             func->overloads.end()
-                            );
+                        );
+                        for (const auto &alias: func->aliases) {
+                            appendUnique(existing->aliases, alias);
+                        }
                     } else {
                         currentClass->funcs.push_back(func);
                     }
                 }
 
-                if (tagMap.contains("property_get") || tagMap.contains("property_set")) {
+                if (isPropertyAccessor) {
                     std::string propName = tagMap.contains("property_get") ? tagMap["property_get"] : tagMap["property_set"];
                     auto it = propertyMap.find(propName);
                     if (it == propertyMap.end()) {

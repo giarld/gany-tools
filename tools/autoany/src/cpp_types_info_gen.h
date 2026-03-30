@@ -25,6 +25,7 @@ struct FuncInfo
 {
     std::string name;
     std::vector<FuncSigInfo> overloads;
+    std::vector<std::string> aliases;
     std::string doc;
     bool isMetaFunc = false;
     bool isStatic = false;
@@ -33,6 +34,7 @@ struct FuncInfo
 struct PropertyInfo
 {
     std::string name;
+    std::vector<std::string> aliases;
     std::shared_ptr<FuncInfo> getter;
     std::shared_ptr<FuncInfo> setter;
     bool hasGetter = false;

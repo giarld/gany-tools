@@ -18,6 +18,19 @@ public:
     static std::string genReflecEnumClassCode(const EnumClassInfo &enumClsInfo);
 
 private:
+    static void genPropertyBinding(std::stringstream &code,
+                                   const std::string &cppClassName,
+                                   const PropertyInfo &propertyInfo,
+                                   const std::string &propertyName,
+                                   bool withDoc);
+
+    static void genFuncBinding(std::stringstream &code,
+                               const std::string &cppClassName,
+                               const FuncInfo &funcInfo,
+                               const std::string &funcName,
+                               size_t overloadIndex,
+                               bool withDoc);
+
     static void genFuncDoc(std::stringstream &os, const FuncInfo &funcInfo, size_t overloadIndex);
 };
 
