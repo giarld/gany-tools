@@ -75,7 +75,8 @@ static bool parseAliasMapping(const std::string &aliasValue, std::string &newNam
     return !newName.empty() && !oldName.empty();
 }
 
-static std::string captureDeclarationBlock(std::istringstream &input, const std::string &firstLine, bool stopAtBodyBegin = false)
+static std::string captureDeclarationBlock(std::istringstream &input, const std::string &firstLine, bool stopAtBodyBegin = false,
+                                           bool preserveLineBreaks = false)
 {
     std::string block;
     int braceDepth = 0;
@@ -84,7 +85,7 @@ static std::string captureDeclarationBlock(std::istringstream &input, const std:
 
     auto appendLine = [&](const std::string &codeLine) {
         if (!block.empty()) {
-            block += ' ';
+            block += preserveLineBreaks ? '\n' : ' ';
         }
         block += codeLine;
         for (char ch: codeLine) {
@@ -121,11 +122,15 @@ static std::string captureDeclarationBlock(std::istringstream &input, const std:
         if (codeLine.empty()) {
             continue;
         }
-        if (codeLine.starts_with("///") || codeLine.starts_with("/**")) {
+        if (!seenBrace && (codeLine.starts_with("///") || codeLine.starts_with("/**"))) {
             break;
         }
 
         appendLine(codeLine);
+    }
+
+    if (preserveLineBreaks) {
+        return trim(block);
     }
 
     std::string normalized;
@@ -144,6 +149,51 @@ static std::string captureDeclarationBlock(std::istringstream &input, const std:
     return trim(normalized);
 }
 
+static std::string stripComments(const std::string &text)
+{
+    std::string result;
+    result.reserve(text.size());
+
+    bool inLineComment = false;
+    bool inBlockComment = false;
+    for (size_t i = 0; i < text.size(); ++i) {
+        const char ch = text[i];
+        const char next = i + 1 < text.size() ? text[i + 1] : '\0';
+
+        if (inLineComment) {
+            if (ch == '\n') {
+                inLineComment = false;
+                result += ch;
+            }
+            continue;
+        }
+
+        if (inBlockComment) {
+            if (ch == '*' && next == '/') {
+                inBlockComment = false;
+                ++i;
+            }
+            continue;
+        }
+
+        if (ch == '/' && next == '/') {
+            inLineComment = true;
+            ++i;
+            continue;
+        }
+
+        if (ch == '/' && next == '*') {
+            inBlockComment = true;
+            ++i;
+            continue;
+        }
+
+        result += ch;
+    }
+
+    return result;
+}
+
 static std::vector<std::string> extractEnumItemsFromDeclaration(const std::string &enumDecl)
 {
     std::vector<std::string> items;
@@ -154,7 +204,7 @@ static std::vector<std::string> extractEnumItemsFromDeclaration(const std::strin
         return items;
     }
 
-    const std::string body = enumDecl.substr(bodyBegin + 1, bodyEnd - bodyBegin - 1);
+    const std::string body = stripComments(enumDecl.substr(bodyBegin + 1, bodyEnd - bodyBegin - 1));
     std::string current;
     int parenDepth = 0;
     int angleDepth = 0;
@@ -467,7 +517,7 @@ std::vector<std::string> CppTypesInfoGen::extractCommentBlocks(const std::string
                         }
                     } else {
                         if (current.find("@enum") != std::string::npos) {
-                            maybeAppendEnumMetadata(current, captureDeclarationBlock(input, trimmed));
+                            maybeAppendEnumMetadata(current, captureDeclarationBlock(input, trimmed, false, true));
                         }
                         for (const char ch: trimmed) {
                             if (ch == '{') {
@@ -511,7 +561,7 @@ std::vector<std::string> CppTypesInfoGen::extractCommentBlocks(const std::string
                     }
                 } else {
                     if (current.find("@enum") != std::string::npos) {
-                        maybeAppendEnumMetadata(current, captureDeclarationBlock(input, ""));
+                        maybeAppendEnumMetadata(current, captureDeclarationBlock(input, "", false, true));
                     }
                 }
 
