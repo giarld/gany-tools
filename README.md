@@ -73,12 +73,10 @@ autoany -m "Gx" -b "include/gx" -p "gx/" -o "./gx/toany/" \
 
 - `@class [name]` - 标记类需要反射
 - `@struct [name]` - 标记结构体需要反射
-- `@enum [name]` - 标记枚举需要反射
+- `@enum [name]` - 标记枚举需要反射，支持 `enum`、`enum class`、`DEF_ENUM*` 和 `DEF_ENUM_FLAGS*`
 - `@inherit [name]` - 指定类继承的基类（可多个）
-- `@enum_item [name]` - 枚举项（每行一个）
 - `@cast_to [type]` - 枚举值需要类型转换到指定类型
 - `@cpp_name [name]` - 列出枚举类的 C++ 类型名称
-- `@def_enum` - DEF_ENUM_N 和 DEF_ENUM_FLAGS_N 的专用标签
 
 ##### 成员相关
 
@@ -87,8 +85,8 @@ autoany -m "Gx" -b "include/gx" -p "gx/" -o "./gx/toany/" \
 - `@func [name]` - 标记成员函数（名称可选）
 - `@static_func [name]` - 标记静态成员函数
 - `@meta_func [name]` - 标记元函数，对应 MetaFunction 枚举值（如：ToString）
-- `@property_get [name]` - 标记属性的 getter 函数
-- `@property_set [name]` - 标记属性的 setter 函数
+- `@property_get [name]` - 标记属性的 getter 函数；函数上的 `@alias` 只生成函数别名
+- `@property_set [name]` - 标记属性的 setter 函数；函数上的 `@alias` 只生成函数别名
 - `@property [name]` - 标记成员属性
 - `@constant [name]` - 标记常量
 - `@pack_again [type]` - 重新打包属性，将使用 REF_PROPERTY_RW
@@ -97,7 +95,7 @@ autoany -m "Gx" -b "include/gx" -p "gx/" -o "./gx/toany/" \
 
 - `@include_from [path]` - 指定在前置声明中需要导入的头文件
 - `@ref_code` - 自定义反射代码块，写在 @ref_code 后换行，支持多行，将原样插入到反射函数中
-- `@alias` - 类型别名，例如：`@alias NewName = OldName`
+- `@alias` - 类型别名或函数/属性别名，例如：`@alias NewName = OldName`、`@alias AliasName`
 
 #### 代码示例
 
@@ -151,9 +149,6 @@ public:
 
 /**
  * @enum Color
- * @enum_item Red
- * @enum_item Green
- * @enum_item Blue
  */
 enum class Color {
     Red,

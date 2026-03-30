@@ -73,12 +73,10 @@ Use the following documentation tags in C++ header files to mark types that need
 
 - `@class [name]` - Mark class for reflection
 - `@struct [name]` - Mark struct for reflection
-- `@enum [name]` - Mark enum for reflection
+- `@enum [name]` - Mark enum for reflection. Supports `enum`, `enum class`, `DEF_ENUM*`, and `DEF_ENUM_FLAGS*`
 - `@inherit [name]` - Specify base class inheritance (multiple allowed)
-- `@enum_item [name]` - Enum item (one per line)
 - `@cast_to [type]` - Enum value needs type conversion to specified type
 - `@cpp_name [name]` - List the C++ type name of the enum class
-- `@def_enum` - Special tag for DEF_ENUM_N and DEF_ENUM_FLAGS_N
 
 ##### Member Related
 
@@ -87,8 +85,8 @@ Use the following documentation tags in C++ header files to mark types that need
 - `@func [name]` - Mark member function (name optional)
 - `@static_func [name]` - Mark static member function
 - `@meta_func [name]` - Mark meta function, corresponding to MetaFunction enum value (e.g., ToString)
-- `@property_get [name]` - Mark property getter function
-- `@property_set [name]` - Mark property setter function
+- `@property_get [name]` - Mark property getter function; `@alias` on the function only generates function aliases
+- `@property_set [name]` - Mark property setter function; `@alias` on the function only generates function aliases
 - `@property [name]` - Mark member property
 - `@constant [name]` - Mark constant
 - `@pack_again [type]` - Repack property, will use REF_PROPERTY_RW
@@ -97,7 +95,7 @@ Use the following documentation tags in C++ header files to mark types that need
 
 - `@include_from [path]` - Specify header files to import in forward declarations
 - `@ref_code` - Custom reflection code block, write after @ref_code on new lines, supports multiple lines, will be inserted into reflection function as-is
-- `@alias` - Type alias, e.g., `@alias NewName = OldName`
+- `@alias` - Type alias or function/property alias, e.g., `@alias NewName = OldName` or `@alias AliasName`
 
 #### Code Example
 
@@ -151,9 +149,6 @@ public:
 
 /**
  * @enum Color
- * @enum_item Red
- * @enum_item Green
- * @enum_item Blue
  */
 enum class Color {
     Red,
