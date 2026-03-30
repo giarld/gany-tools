@@ -75,8 +75,11 @@ static bool parseAliasMapping(const std::string &aliasValue, std::string &newNam
     return !newName.empty() && !oldName.empty();
 }
 
-static std::string captureDeclarationBlock(std::istringstream &input, const std::string &firstLine, bool stopAtBodyBegin = false,
-                                           bool preserveLineBreaks = false)
+static std::string captureDeclarationBlock(std::istringstream &input,
+                                           const std::string &firstLine,
+                                           bool stopAtBodyBegin = false,
+                                           bool preserveLineBreaks = false,
+                                           std::string *unreadLine = nullptr)
 {
     std::string block;
     int braceDepth = 0;
@@ -123,6 +126,9 @@ static std::string captureDeclarationBlock(std::istringstream &input, const std:
             continue;
         }
         if (!seenBrace && (codeLine.starts_with("///") || codeLine.starts_with("/**"))) {
+            if (unreadLine) {
+                *unreadLine = line;
+            }
             break;
         }
 
@@ -418,9 +424,21 @@ std::vector<std::string> CppTypesInfoGen::extractCommentBlocks(const std::string
     std::vector<std::string> comments;
     std::istringstream input(source);
     std::string line;
+    std::string unreadLine;
+    bool hasUnreadLine = false;
     bool inBlock = false;
     bool isDocComment = false;
     std::string current;
+
+    auto nextLine = [&](std::string &out) -> bool {
+        if (hasUnreadLine) {
+            out = unreadLine;
+            unreadLine.clear();
+            hasUnreadLine = false;
+            return true;
+        }
+        return static_cast<bool>(std::getline(input, out));
+    };
 
     auto cleanCommentLine = [](const std::string &l) -> std::string {
         std::string trimmed = trim(l);
@@ -452,7 +470,7 @@ std::vector<std::string> CppTypesInfoGen::extractCommentBlocks(const std::string
         }
     };
 
-    while (std::getline(input, line)) {
+    while (nextLine(line)) {
         std::string trimmed = trim(line);
 
         if (!inBlock) {
@@ -517,7 +535,12 @@ std::vector<std::string> CppTypesInfoGen::extractCommentBlocks(const std::string
                         }
                     } else {
                         if (current.find("@enum") != std::string::npos) {
-                            maybeAppendEnumMetadata(current, captureDeclarationBlock(input, trimmed, false, true));
+                            std::string pendingLine;
+                            maybeAppendEnumMetadata(current, captureDeclarationBlock(input, trimmed, false, true, &pendingLine));
+                            if (!pendingLine.empty()) {
+                                unreadLine = pendingLine;
+                                hasUnreadLine = true;
+                            }
                         }
                         for (const char ch: trimmed) {
                             if (ch == '{') {
@@ -561,7 +584,12 @@ std::vector<std::string> CppTypesInfoGen::extractCommentBlocks(const std::string
                     }
                 } else {
                     if (current.find("@enum") != std::string::npos) {
-                        maybeAppendEnumMetadata(current, captureDeclarationBlock(input, "", false, true));
+                        std::string pendingLine;
+                        maybeAppendEnumMetadata(current, captureDeclarationBlock(input, "", false, true, &pendingLine));
+                        if (!pendingLine.empty()) {
+                            unreadLine = pendingLine;
+                            hasUnreadLine = true;
+                        }
                     }
                 }
 
