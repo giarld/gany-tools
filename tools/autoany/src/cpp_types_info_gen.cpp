@@ -75,6 +75,18 @@ static bool parseAliasMapping(const std::string &aliasValue, std::string &newNam
     return !newName.empty() && !oldName.empty();
 }
 
+template<typename TTagItem>
+static std::vector<std::string> collectTagValues(const std::vector<TTagItem> &tags, const std::string &tagName)
+{
+    std::vector<std::string> values;
+    for (const auto &tag: tags) {
+        if (tag.tag == tagName) {
+            appendUnique(values, trim(tag.value));
+        }
+    }
+    return values;
+}
+
 static std::string captureDeclarationBlock(std::istringstream &input,
                                            const std::string &firstLine,
                                            bool stopAtBodyBegin = false,
@@ -518,7 +530,9 @@ std::vector<std::string> CppTypesInfoGen::extractCommentBlocks(const std::string
                     bool needFuncSig = current.find("@construct") != std::string::npos ||
                                        current.find("@func") != std::string::npos ||
                                        current.find("@static_func") != std::string::npos ||
-                                       current.find("@meta_func") != std::string::npos;
+                                       current.find("@meta_func") != std::string::npos ||
+                                       current.find("@property_get") != std::string::npos ||
+                                       current.find("@property_set") != std::string::npos;
 
                     bool hasBeginScope = false;
                     bool hasEndScope = false;
@@ -567,7 +581,9 @@ std::vector<std::string> CppTypesInfoGen::extractCommentBlocks(const std::string
                 bool needFuncSig = current.find("@construct") != std::string::npos ||
                                    current.find("@func") != std::string::npos ||
                                    current.find("@static_func") != std::string::npos ||
-                                   current.find("@meta_func") != std::string::npos;
+                                   current.find("@meta_func") != std::string::npos ||
+                                   current.find("@property_get") != std::string::npos ||
+                                   current.find("@property_set") != std::string::npos;
 
                 bool hasBeginScope = false;
                 bool hasEndScope = false;
@@ -956,7 +972,8 @@ TypesInfo CppTypesInfoGen::assembleTypesInfo(const std::vector<ParsedItem> &pars
             currentClass->constructs.push_back(func);
         }
 
-        if (tagMap.contains("construct") || tagMap.contains("func") || tagMap.contains("static_func") || tagMap.contains("meta_func")) {
+        if (tagMap.contains("construct") || tagMap.contains("func") || tagMap.contains("static_func") || tagMap.contains("meta_func") ||
+            tagMap.contains("property_get") || tagMap.contains("property_set")) {
             auto func = std::make_shared<FuncInfo>();
             func->doc = currentDoc;
 
@@ -980,7 +997,9 @@ TypesInfo CppTypesInfoGen::assembleTypesInfo(const std::vector<ParsedItem> &pars
                 }
             }
 
-            const bool isPropertyAccessor = tagMap.contains("property_get") || tagMap.contains("property_set");
+            const auto getterNames = collectTagValues(item.tags, "property_get");
+            const auto setterNames = collectTagValues(item.tags, "property_set");
+            const bool isPropertyAccessor = !getterNames.empty() || !setterNames.empty();
             for (const auto &tag: item.tags) {
                 if (tag.tag == "alias") {
                     appendUnique(func->aliases, trim(tag.value));
@@ -990,6 +1009,7 @@ TypesInfo CppTypesInfoGen::assembleTypesInfo(const std::vector<ParsedItem> &pars
             if (tagMap.contains("construct")) {
                 currentClass->constructs.push_back(func);
             } else {
+                std::shared_ptr<FuncInfo> boundFunc = func;
                 {
                     FuncInfo *existing = nullptr;
                     for (auto &f: currentClass->funcs) {
@@ -1008,28 +1028,45 @@ TypesInfo CppTypesInfoGen::assembleTypesInfo(const std::vector<ParsedItem> &pars
                         for (const auto &alias: func->aliases) {
                             appendUnique(existing->aliases, alias);
                         }
+                        for (const auto &f: currentClass->funcs) {
+                            if (f.get() == existing) {
+                                boundFunc = f;
+                                break;
+                            }
+                        }
                     } else {
                         currentClass->funcs.push_back(func);
+                        boundFunc = func;
                     }
                 }
 
                 if (isPropertyAccessor) {
-                    std::string propName = tagMap.contains("property_get") ? tagMap["property_get"] : tagMap["property_set"];
-                    auto it = propertyMap.find(propName);
-                    if (it == propertyMap.end()) {
-                        auto prop = std::make_shared<PropertyInfo>();
-                        prop->name = propName;
-                        currentClass->properties.push_back(prop);
-                        propertyMap[propName] = prop.get();
-                        it = propertyMap.find(propName);
-                    }
-                    if (it != propertyMap.end()) {
-                        auto lastFunc = currentClass->funcs.back();
-                        if (tagMap.contains("property_get")) {
-                            it->second->getter = lastFunc;
+                    for (const auto &propName: getterNames) {
+                        auto it = propertyMap.find(propName);
+                        if (it == propertyMap.end()) {
+                            auto prop = std::make_shared<PropertyInfo>();
+                            prop->name = propName;
+                            currentClass->properties.push_back(prop);
+                            propertyMap[propName] = prop.get();
+                            it = propertyMap.find(propName);
+                        }
+                        if (it != propertyMap.end()) {
+                            it->second->getter = boundFunc;
                             it->second->hasGetter = true;
-                        } else {
-                            it->second->setter = lastFunc;
+                        }
+                    }
+
+                    for (const auto &propName: setterNames) {
+                        auto it = propertyMap.find(propName);
+                        if (it == propertyMap.end()) {
+                            auto prop = std::make_shared<PropertyInfo>();
+                            prop->name = propName;
+                            currentClass->properties.push_back(prop);
+                            propertyMap[propName] = prop.get();
+                            it = propertyMap.find(propName);
+                        }
+                        if (it != propertyMap.end()) {
+                            it->second->setter = boundFunc;
                             it->second->hasSetter = true;
                         }
                     }
