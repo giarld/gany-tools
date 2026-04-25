@@ -73,6 +73,7 @@ autoany -m "Gx" -b "include/gx" -p "gx/" -o "./gx/toany/" \
 
 - `@class [name]` - 标记类需要反射
 - `@struct [name]` - 标记结构体需要反射
+- `@template_type [name = type]` - 实例化一个模板反射类，例如 `@template_type Vec3f = Vector<float, 3>`；模板类内声明的成员会复用于每个实例
 - `@enum [name]` - 标记枚举需要反射，支持 `enum`、`enum class`、`DEF_ENUM*` 和 `DEF_ENUM_FLAGS*`
 - `@inherit [name]` - 指定类继承的基类（可多个）
 - `@cast_to [type]` - 枚举值需要类型转换到指定类型
@@ -85,8 +86,8 @@ autoany -m "Gx" -b "include/gx" -p "gx/" -o "./gx/toany/" \
 - `@func [name]` - 标记成员函数（名称可选）
 - `@static_func [name]` - 标记静态成员函数
 - `@meta_func [name]` - 标记元函数，对应 MetaFunction 枚举值（如：ToString）
-- `@property_get [name]` - 标记属性的 getter 函数；函数上的 `@alias` 只生成函数别名
-- `@property_set [name]` - 标记属性的 setter 函数；函数上的 `@alias` 只生成函数别名
+- `@property_get [name]` - 标记属性的 getter 函数；同一个函数可声明多个 getter 标签，对应多个属性；函数上的 `@alias` 只生成函数别名
+- `@property_set [name]` - 标记属性的 setter 函数；同一个函数可声明多个 setter 标签，对应多个属性；函数上的 `@alias` 只生成函数别名
 - `@property [name]` - 标记成员属性
 - `@constant [name]` - 标记常量
 - `@pack_again [type]` - 重新打包属性，将使用 REF_PROPERTY_RW
@@ -154,6 +155,74 @@ enum class Color {
     Red,
     Green,
     Blue
+};
+}
+```
+
+##### 模板类型示例
+
+```cpp
+// template_example.h
+
+/// @ns Math
+/// @cpp_ns math
+namespace math
+{
+/**
+ * @struct BBox
+ */
+template<typename T, int N = 1>
+struct BBox
+{
+    /**
+     * @default_construct
+     */
+
+    /**
+     * @property value
+     */
+    T value;
+
+    /**
+     * @func size
+     */
+    int size() const;
+};
+
+/**
+ * @struct IntBox
+ * @inherit BBox<int>
+ */
+struct IntBox : BBox<int>
+{
+    /**
+     * @default_construct
+     */
+
+    /**
+     * @func
+     */
+    int getValue() const
+    {
+        return value;
+    }
+};
+
+/**
+ * @struct Vec3f
+ * @inherit BBox<float, 3>
+ */
+struct Vec3f : BBox<float, 3>
+{
+    /**
+     * @func
+     */
+    std::string toString() const
+    {
+        std::stringstream ss;
+        ss << "{" << value << ", " << value << ", " << value << "}";
+        return ss.str();
+    }
 };
 }
 ```

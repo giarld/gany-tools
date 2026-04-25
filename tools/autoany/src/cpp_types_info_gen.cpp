@@ -75,6 +75,133 @@ static bool parseAliasMapping(const std::string &aliasValue, std::string &newNam
     return !newName.empty() && !oldName.empty();
 }
 
+static bool parseTemplateTypeMapping(const std::string &templateTypeValue, TemplateTypeInfo &templateType)
+{
+    std::string refName;
+    std::string cppName;
+    if (!parseAliasMapping(templateTypeValue, refName, cppName)) {
+        return false;
+    }
+
+    templateType.name = refName;
+    templateType.cppName = cppName;
+    return true;
+}
+
+static bool isTemplateDeclaration(const std::string &decl)
+{
+    return decl.find("template") != std::string::npos && decl.find('<') != std::string::npos && decl.find('>') != std::string::npos;
+}
+
+static std::string templateBaseName(const std::string &type)
+{
+    const size_t open = type.find('<');
+    if (open == std::string::npos) {
+        return "";
+    }
+    return trim(type.substr(0, open));
+}
+
+static bool hasProperty(const ClassInfo &cls, const std::string &name)
+{
+    return std::any_of(cls.properties.begin(), cls.properties.end(), [&](const auto &prop) {
+        return prop->name == name;
+    });
+}
+
+static bool sameFunctionOverload(const FuncSigInfo &lhs, const FuncSigInfo &rhs)
+{
+    return lhs.name == rhs.name && lhs.retType == rhs.retType && lhs.argTypes == rhs.argTypes;
+}
+
+static bool hasMatchingFunctionOverload(const ClassInfo &cls, const FuncInfo &func, const FuncSigInfo &overload)
+{
+    return std::any_of(cls.funcs.begin(), cls.funcs.end(), [&](const auto &existing) {
+        if (existing->name != func.name || existing->isMetaFunc != func.isMetaFunc || existing->isStatic != func.isStatic) {
+            return false;
+        }
+        return std::any_of(existing->overloads.begin(), existing->overloads.end(), [&](const auto &existingOverload) {
+            return sameFunctionOverload(existingOverload, overload);
+        });
+    });
+}
+
+static void appendUniqueOverloads(std::vector<FuncSigInfo> &overloads, const std::vector<FuncSigInfo> &newOverloads)
+{
+    for (const auto &overload: newOverloads) {
+        const bool exists = std::any_of(overloads.begin(), overloads.end(), [&](const auto &existing) {
+            return sameFunctionOverload(existing, overload);
+        });
+        if (!exists) {
+            overloads.push_back(overload);
+        }
+    }
+}
+
+static void dedupeFunctionOverloads(FuncInfo &func)
+{
+    std::vector<FuncSigInfo> uniqueOverloads;
+    appendUniqueOverloads(uniqueOverloads, func.overloads);
+    func.overloads = std::move(uniqueOverloads);
+}
+
+static std::shared_ptr<FuncInfo> cloneFunctionForOwner(const std::shared_ptr<FuncInfo> &func, const std::string &ownerCppName)
+{
+    auto cloned = std::make_shared<FuncInfo>(*func);
+    cloned->ownerCppName = ownerCppName;
+    dedupeFunctionOverloads(*cloned);
+    return cloned;
+}
+
+static std::shared_ptr<FuncInfo> cloneMissingFunctionOverloadsForOwner(const ClassInfo &cls,
+                                                                       const std::shared_ptr<FuncInfo> &func,
+                                                                       const std::string &ownerCppName)
+{
+    auto cloned = cloneFunctionForOwner(func, ownerCppName);
+    std::vector<FuncSigInfo> missingOverloads;
+    for (const auto &overload: cloned->overloads) {
+        if (!hasMatchingFunctionOverload(cls, *cloned, overload)) {
+            missingOverloads.push_back(overload);
+        }
+    }
+    cloned->overloads = std::move(missingOverloads);
+    return cloned;
+}
+
+static std::shared_ptr<PropertyInfo> clonePropertyForOwner(const std::shared_ptr<PropertyInfo> &prop, const std::string &ownerCppName)
+{
+    auto cloned = std::make_shared<PropertyInfo>(*prop);
+    cloned->ownerCppName = ownerCppName;
+    if (cloned->getter) {
+        cloned->getter = cloneFunctionForOwner(cloned->getter, ownerCppName);
+    }
+    if (cloned->setter) {
+        cloned->setter = cloneFunctionForOwner(cloned->setter, ownerCppName);
+    }
+    return cloned;
+}
+
+static std::string classFullCppName(const ClassInfo &cls)
+{
+    return cls.outerCppName.empty() ? cls.cppName : cls.outerCppName + "::" + cls.cppName;
+}
+
+static void mixinTemplateBaseMembers(ClassInfo &cls, const ClassInfo &templateBase, const std::string &baseCppName)
+{
+    for (const auto &prop: templateBase.properties) {
+        if (!hasProperty(cls, prop->name)) {
+            cls.properties.push_back(clonePropertyForOwner(prop, baseCppName));
+        }
+    }
+
+    for (const auto &func: templateBase.funcs) {
+        auto clonedFunc = cloneMissingFunctionOverloadsForOwner(cls, func, baseCppName);
+        if (!clonedFunc->overloads.empty()) {
+            cls.funcs.push_back(clonedFunc);
+        }
+    }
+}
+
 template<typename TTagItem>
 static std::vector<std::string> collectTagValues(const std::vector<TTagItem> &tags, const std::string &tagName)
 {
@@ -548,6 +675,15 @@ std::vector<std::string> CppTypesInfoGen::extractCommentBlocks(const std::string
                             current += "@func_sig " + funcSig + "\n";
                         }
                     } else {
+                        if (current.find("@class") != std::string::npos || current.find("@struct") != std::string::npos) {
+                            std::string decl = captureDeclarationBlock(input, trimmed, true);
+                            if (decl.find('{') != std::string::npos) {
+                                hasBeginScope = true;
+                            }
+                            if (!decl.empty()) {
+                                current += "@cpp_decl " + decl + "\n";
+                            }
+                        }
                         if (current.find("@enum") != std::string::npos) {
                             std::string pendingLine;
                             maybeAppendEnumMetadata(current, captureDeclarationBlock(input, trimmed, false, true, &pendingLine));
@@ -599,6 +735,18 @@ std::vector<std::string> CppTypesInfoGen::extractCommentBlocks(const std::string
                         current += "@func_sig " + funcSig + "\n";
                     }
                 } else {
+                    if (current.find("@class") != std::string::npos || current.find("@struct") != std::string::npos) {
+                        std::string decl = captureDeclarationBlock(input, "", true);
+                        if (decl.find('{') != std::string::npos) {
+                            hasBeginScope = true;
+                        }
+                        if (decl.find('}') != std::string::npos) {
+                            hasEndScope = true;
+                        }
+                        if (!decl.empty()) {
+                            current += "@cpp_decl " + decl + "\n";
+                        }
+                    }
                     if (current.find("@enum") != std::string::npos) {
                         std::string pendingLine;
                         maybeAppendEnumMetadata(current, captureDeclarationBlock(input, "", false, true, &pendingLine));
@@ -878,10 +1026,25 @@ TypesInfo CppTypesInfoGen::assembleTypesInfo(const std::vector<ParsedItem> &pars
                 cls->cppName = cls->name;
             }
 
+            if (tagMap.contains("cpp_decl")) {
+                cls->isTemplateDefinition = isTemplateDeclaration(tagMap["cpp_decl"]);
+            }
+
             if (tagMap.contains("inherit")) {
                 for (const auto &t: item.tags) {
                     if (t.tag == "inherit") {
                         cls->parents.push_back(t.value);
+                    }
+                }
+            }
+
+            if (tagMap.contains("template_type")) {
+                for (const auto &t: item.tags) {
+                    if (t.tag == "template_type") {
+                        TemplateTypeInfo templateType;
+                        if (parseTemplateTypeMapping(t.value, templateType)) {
+                            cls->templateTypes.push_back(templateType);
+                        }
                     }
                 }
             }
@@ -949,6 +1112,7 @@ TypesInfo CppTypesInfoGen::assembleTypesInfo(const std::vector<ParsedItem> &pars
         if (tagMap.contains("property")) {
             auto prop = std::make_shared<PropertyInfo>();
             prop->name = tagMap["property"];
+            prop->ownerCppName = classFullCppName(*currentClass);
             prop->doc = currentDoc;
 
             if (tagMap.contains("pack_again")) {
@@ -968,6 +1132,7 @@ TypesInfo CppTypesInfoGen::assembleTypesInfo(const std::vector<ParsedItem> &pars
 
         if (tagMap.contains("default_construct")) {
             auto func = std::make_shared<FuncInfo>();
+            func->ownerCppName = classFullCppName(*currentClass);
             func->overloads.push_back({});
             currentClass->constructs.push_back(func);
         }
@@ -975,6 +1140,7 @@ TypesInfo CppTypesInfoGen::assembleTypesInfo(const std::vector<ParsedItem> &pars
         if (tagMap.contains("construct") || tagMap.contains("func") || tagMap.contains("static_func") || tagMap.contains("meta_func") ||
             tagMap.contains("property_get") || tagMap.contains("property_set")) {
             auto func = std::make_shared<FuncInfo>();
+            func->ownerCppName = classFullCppName(*currentClass);
             func->doc = currentDoc;
 
             if (tagMap.contains("construct"))
@@ -1020,11 +1186,7 @@ TypesInfo CppTypesInfoGen::assembleTypesInfo(const std::vector<ParsedItem> &pars
                     }
 
                     if (existing) {
-                        existing->overloads.insert(
-                            existing->overloads.end(),
-                            func->overloads.begin(),
-                            func->overloads.end()
-                        );
+                        appendUniqueOverloads(existing->overloads, func->overloads);
                         for (const auto &alias: func->aliases) {
                             appendUnique(existing->aliases, alias);
                         }
@@ -1046,6 +1208,7 @@ TypesInfo CppTypesInfoGen::assembleTypesInfo(const std::vector<ParsedItem> &pars
                         if (it == propertyMap.end()) {
                             auto prop = std::make_shared<PropertyInfo>();
                             prop->name = propName;
+                            prop->ownerCppName = classFullCppName(*currentClass);
                             currentClass->properties.push_back(prop);
                             propertyMap[propName] = prop.get();
                             it = propertyMap.find(propName);
@@ -1061,6 +1224,7 @@ TypesInfo CppTypesInfoGen::assembleTypesInfo(const std::vector<ParsedItem> &pars
                         if (it == propertyMap.end()) {
                             auto prop = std::make_shared<PropertyInfo>();
                             prop->name = propName;
+                            prop->ownerCppName = classFullCppName(*currentClass);
                             currentClass->properties.push_back(prop);
                             propertyMap[propName] = prop.get();
                             it = propertyMap.find(propName);
@@ -1075,7 +1239,52 @@ TypesInfo CppTypesInfoGen::assembleTypesInfo(const std::vector<ParsedItem> &pars
         }
     }
 
-    typesInfo.classInfos = {classes.begin(), classes.end()};
+    std::unordered_map<std::string, std::shared_ptr<ClassInfo>> templateDefinitions;
+    for (const auto &cls: classes) {
+        if (cls->isTemplateDefinition) {
+            templateDefinitions[cls->name] = cls;
+            templateDefinitions[cls->cppName] = cls;
+            templateDefinitions[classFullCppName(*cls)] = cls;
+        }
+    }
+
+    for (const auto &cls: classes) {
+        if (!cls->isTemplateDefinition) {
+            for (const auto &parent: cls->parents) {
+                const std::string baseName = templateBaseName(parent);
+                const auto templateIt = templateDefinitions.find(baseName);
+                if (templateIt != templateDefinitions.end()) {
+                    mixinTemplateBaseMembers(*cls, *templateIt->second, parent);
+                }
+            }
+        }
+
+        if (cls->templateTypes.empty() && !cls->isTemplateDefinition) {
+            typesInfo.classInfos.push_back(cls);
+            continue;
+        }
+
+        for (const auto &templateType: cls->templateTypes) {
+            auto templateClass = std::make_shared<ClassInfo>(*cls);
+            templateClass->name = templateType.name;
+            templateClass->cppName = templateType.cppName;
+            templateClass->isTemplateDefinition = false;
+            templateClass->outerClass.clear();
+            templateClass->outerCppName.clear();
+            templateClass->templateTypes.clear();
+            templateClass->properties.clear();
+            templateClass->funcs.clear();
+            for (const auto &prop: cls->properties) {
+                templateClass->properties.push_back(clonePropertyForOwner(prop, templateType.cppName));
+            }
+            for (const auto &func: cls->funcs) {
+                auto clonedFunc = cloneFunctionForOwner(func, templateType.cppName);
+                dedupeFunctionOverloads(*clonedFunc);
+                templateClass->funcs.push_back(clonedFunc);
+            }
+            typesInfo.classInfos.push_back(templateClass);
+        }
+    }
     typesInfo.enumClassInfos = enumClasses;
 
     resolveAllTypesFullQualified(typesInfo.classInfos);

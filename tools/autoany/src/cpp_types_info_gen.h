@@ -24,6 +24,7 @@ struct FuncSigInfo
 struct FuncInfo
 {
     std::string name;
+    std::string ownerCppName;
     std::vector<FuncSigInfo> overloads;
     std::vector<std::string> aliases;
     std::string doc;
@@ -34,6 +35,7 @@ struct FuncInfo
 struct PropertyInfo
 {
     std::string name;
+    std::string ownerCppName;
     std::vector<std::string> aliases;
     std::shared_ptr<FuncInfo> getter;
     std::shared_ptr<FuncInfo> setter;
@@ -69,6 +71,12 @@ struct ConstantInfo
     std::string name;
 };
 
+struct TemplateTypeInfo
+{
+    std::string name;
+    std::string cppName;
+};
+
 struct ClassInfo
 {
     std::string name;
@@ -76,6 +84,7 @@ struct ClassInfo
     std::string ns;
     std::string outerClass;
     std::string outerCppName;
+    bool isTemplateDefinition = false;
     std::string doc;
     std::vector<std::string> parents;
     std::vector<std::shared_ptr<FuncInfo> > constructs;
@@ -84,6 +93,7 @@ struct ClassInfo
     std::vector<std::shared_ptr<EnumInfo> > enums;
     std::vector<std::shared_ptr<ConstantInfo> > constants;
     std::unordered_map<std::string, std::string> aliases;
+    std::vector<TemplateTypeInfo> templateTypes;
 };
 
 struct TypesInfo

@@ -73,6 +73,7 @@ Use the following documentation tags in C++ header files to mark types that need
 
 - `@class [name]` - Mark class for reflection
 - `@struct [name]` - Mark struct for reflection
+- `@template_type [name = type]` - Instantiate a reflected template class, e.g. `@template_type Vec3f = Vector<float, 3>`; declared members are reused for every template instance
 - `@enum [name]` - Mark enum for reflection. Supports `enum`, `enum class`, `DEF_ENUM*`, and `DEF_ENUM_FLAGS*`
 - `@inherit [name]` - Specify base class inheritance (multiple allowed)
 - `@cast_to [type]` - Enum value needs type conversion to specified type
@@ -85,8 +86,8 @@ Use the following documentation tags in C++ header files to mark types that need
 - `@func [name]` - Mark member function (name optional)
 - `@static_func [name]` - Mark static member function
 - `@meta_func [name]` - Mark meta function, corresponding to MetaFunction enum value (e.g., ToString)
-- `@property_get [name]` - Mark property getter function; `@alias` on the function only generates function aliases
-- `@property_set [name]` - Mark property setter function; `@alias` on the function only generates function aliases
+- `@property_get [name]` - Mark property getter function; the same function can declare multiple getter tags for multiple properties; `@alias` on the function only generates function aliases
+- `@property_set [name]` - Mark property setter function; the same function can declare multiple setter tags for multiple properties; `@alias` on the function only generates function aliases
 - `@property [name]` - Mark member property
 - `@constant [name]` - Mark constant
 - `@pack_again [type]` - Repack property, will use REF_PROPERTY_RW
@@ -154,6 +155,74 @@ enum class Color {
     Red,
     Green,
     Blue
+};
+}
+```
+
+##### Template Type Example
+
+```cpp
+// template_example.h
+
+/// @ns Math
+/// @cpp_ns math
+namespace math
+{
+/**
+ * @struct BBox
+ */
+template<typename T, int N = 1>
+struct BBox
+{
+    /**
+     * @default_construct
+     */
+
+    /**
+     * @property value
+     */
+    T value;
+
+    /**
+     * @func size
+     */
+    int size() const;
+};
+
+/**
+ * @struct IntBox
+ * @inherit BBox<int>
+ */
+struct IntBox : BBox<int>
+{
+    /**
+     * @default_construct
+     */
+
+    /**
+     * @func
+     */
+    int getValue() const
+    {
+        return value;
+    }
+};
+
+/**
+ * @struct Vec3f
+ * @inherit BBox<float, 3>
+ */
+struct Vec3f : BBox<float, 3>
+{
+    /**
+     * @func
+     */
+    std::string toString() const
+    {
+        std::stringstream ss;
+        ss << "{" << value << ", " << value << ", " << value << "}";
+        return ss.str();
+    }
 };
 }
 ```

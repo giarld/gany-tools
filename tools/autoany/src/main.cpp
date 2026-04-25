@@ -50,6 +50,7 @@ Doc Tags:
     @include_from [path]        Used to indicate which header files to import from in advance declaration.
     @class [name]               Indicate the beginning of the class, that is, the current class needs to be reflected.
     @struct [name]              Indicate the beginning of the structure, that is, the current structure needs to be reflected.
+    @template_type [name = type] Instantiate a reflected template class, e.g. @template_type Vec3f = Vector<float, 3>.
     @inherit [name]             Indicate which base class the class inherits from, and there can be multiple.
     @enum [name]                Represents enumeration. Supports enum/enum class and DEF_ENUM*/DEF_ENUM_FLAGS* macros.
     @cast_to [type]             The enumeration value needs to be type converted to the specified type.

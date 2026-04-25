@@ -164,16 +164,19 @@ void ToAnyGen::genPropertyBinding(std::stringstream &code,
                                   const std::string &propertyName,
                                   bool withDoc)
 {
+    const std::string ownerCppName = propertyInfo.ownerCppName.empty() ? cppClassName : propertyInfo.ownerCppName;
     if (propertyInfo.hasGetter || propertyInfo.hasSetter) {
         code << "\n    .property(" << formatString(propertyName) << ", ";
         if (propertyInfo.hasGetter) {
-            code << "&" << cppClassName << "::" << propertyInfo.getter->name;
+            const std::string getterOwner = propertyInfo.getter->ownerCppName.empty() ? ownerCppName : propertyInfo.getter->ownerCppName;
+            code << "&" << getterOwner << "::" << propertyInfo.getter->name;
         } else {
             code << "GAny()";
         }
         code << ", ";
         if (propertyInfo.hasSetter) {
-            code << "&" << cppClassName << "::" << propertyInfo.setter->name;
+            const std::string setterOwner = propertyInfo.setter->ownerCppName.empty() ? ownerCppName : propertyInfo.setter->ownerCppName;
+            code << "&" << setterOwner << "::" << propertyInfo.setter->name;
         } else {
             code << "GAny()";
         }
@@ -194,7 +197,7 @@ void ToAnyGen::genPropertyBinding(std::stringstream &code,
         }
         code << ")";
     } else {
-        code << "\n    .readWrite(" << formatString(propertyName) << ", &" << cppClassName << "::" << propertyInfo.name;
+        code << "\n    .readWrite(" << formatString(propertyName) << ", &" << ownerCppName << "::" << propertyInfo.name;
         if (withDoc) {
             code << ", " << formatString(propertyInfo.doc);
         }
@@ -211,6 +214,8 @@ void ToAnyGen::genFuncBinding(std::stringstream &code,
 {
     const auto &overload = funcInfo.overloads[overloadIndex];
     const bool hasOverloads = funcInfo.overloads.size() > 1;
+    const std::string ownerCppName = funcInfo.ownerCppName.empty() ? cppClassName : funcInfo.ownerCppName;
+    const bool useOwnerThunk = ownerCppName != cppClassName && !funcInfo.isStatic;
 
     if (funcInfo.isStatic) {
         code << "\n    .staticFunc(";
@@ -225,8 +230,8 @@ void ToAnyGen::genFuncBinding(std::stringstream &code,
     }
     code << ", ";
 
-    if (!hasOverloads) {
-        code << "&" << cppClassName << "::" << overload.name;
+    if (!hasOverloads && !useOwnerThunk) {
+        code << "&" << ownerCppName << "::" << overload.name;
     } else {
         code << "[](";
         if (!funcInfo.isStatic) {
@@ -244,9 +249,13 @@ void ToAnyGen::genFuncBinding(std::stringstream &code,
             code << "return ";
         }
         if (!funcInfo.isStatic) {
-            code << "self.";
+            if (useOwnerThunk) {
+                code << "static_cast<" << ownerCppName << " &>(self).";
+            } else {
+                code << "self.";
+            }
         } else {
-            code << cppClassName << "::";
+            code << ownerCppName << "::";
         }
         code << overload.name << "(";
         for (size_t k = 0; k < overload.argsNames.size(); k++) {
