@@ -6,9 +6,178 @@
 
 #include <gx/gstring.h>
 
+#include <cctype>
+#include <unordered_set>
+
 
 namespace tools
 {
+namespace
+{
+bool isIdentifierStart(const char ch)
+{
+    return std::isalpha(static_cast<unsigned char>(ch)) || ch == '_' || ch == '$';
+}
+
+bool isIdentifierPart(const char ch)
+{
+    return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_' || ch == '$';
+}
+
+bool isReservedWord(const std::string &word)
+{
+    static const std::unordered_set<std::string> RESERVED = {
+        "await", "break", "case", "catch", "class", "const", "continue",
+        "debugger", "default", "delete", "do", "else", "enum", "export",
+        "extends", "false", "finally", "for", "function", "if", "import",
+        "in", "instanceof", "new", "null", "return", "super", "switch",
+        "this", "throw", "true", "try", "typeof", "var", "void", "while",
+        "with", "yield", "let", "static", "implements", "interface",
+        "package", "private", "protected", "public"
+    };
+    return RESERVED.find(word) != RESERVED.end();
+}
+
+std::string escapeJsString(const std::string &value)
+{
+    std::string out;
+    out.reserve(value.size() + 2);
+    out.push_back('"');
+    for (const char ch: value) {
+        switch (ch) {
+            case '\\':
+                out.append("\\\\");
+                break;
+            case '"':
+                out.append("\\\"");
+                break;
+            case '\b':
+                out.append("\\b");
+                break;
+            case '\f':
+                out.append("\\f");
+                break;
+            case '\n':
+                out.append("\\n");
+                break;
+            case '\r':
+                out.append("\\r");
+                break;
+            case '\t':
+                out.append("\\t");
+                break;
+            default:
+                out.push_back(ch);
+                break;
+        }
+    }
+    out.push_back('"');
+    return out;
+}
+
+std::string toJsLiteral(const GAny &value)
+{
+    if (value.isUndefined()) {
+        return "undefined";
+    }
+    if (value.isUserObject()) {
+        return value.toObject().toJsonString(2);
+    }
+    return value.toJsonString(2);
+}
+
+std::string trimString(std::string value)
+{
+    const auto begin = value.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) {
+        return "";
+    }
+    const auto end = value.find_last_not_of(" \t\r\n");
+    return value.substr(begin, end - begin + 1);
+}
+
+std::string stripCppTypePrefix(std::string name)
+{
+    name = trimString(std::move(name));
+    static constexpr const char *PREFIXES[] = {
+        "const ",
+        "struct ",
+        "class ",
+        "enum "
+    };
+
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (const char *prefix: PREFIXES) {
+            const std::string prefixText = prefix;
+            if (name.rfind(prefixText, 0) == 0) {
+                name = trimString(name.substr(prefixText.size()));
+                changed = true;
+            }
+        }
+    }
+    return name;
+}
+
+std::string toJsIdentifier(std::string name, const std::string &templatePrefix = "Template_")
+{
+    name = stripCppTypePrefix(std::move(name));
+    const bool isTemplateType = name.find('<') != std::string::npos;
+    if (name.empty()) {
+        return "_";
+    }
+    std::string normalized;
+    normalized.reserve(name.size());
+    bool lastWasSeparator = false;
+    for (const char ch: name) {
+        if (isIdentifierPart(ch)) {
+            normalized.push_back(ch);
+            lastWasSeparator = false;
+        } else if (!lastWasSeparator) {
+            normalized.push_back('_');
+            lastWasSeparator = true;
+        }
+    }
+
+    while (!normalized.empty() && normalized.back() == '_') {
+        normalized.pop_back();
+    }
+    if (normalized.empty()) {
+        normalized = "_";
+    }
+    if (isTemplateType) {
+        normalized.insert(0, templatePrefix);
+    }
+    if (!isIdentifierStart(normalized[0])) {
+        normalized.insert(normalized.begin(), '_');
+    }
+    if (isReservedWord(normalized)) {
+        normalized.append("_");
+    }
+    return normalized;
+}
+
+std::string toJsParameterIdentifier(std::string name)
+{
+    if (name.empty()) {
+        return "_";
+    }
+    for (char &ch: name) {
+        if (!isIdentifierPart(ch)) {
+            ch = '_';
+        }
+    }
+    if (!isIdentifierStart(name[0])) {
+        name.insert(name.begin(), '_');
+    }
+    if (isReservedWord(name)) {
+        name.append("_");
+    }
+    return name;
+}
+}
+
 std::string MakeJsDoc::makeClassDoc(const GAnyClass &clazz)
 {
     GAny dumpObj = clazz.dump();
@@ -18,6 +187,7 @@ std::string MakeJsDoc::makeClassDoc(const GAnyClass &clazz)
 
     std::string className = dumpObj["class"].toString();
     const std::string &fullName = className;
+    const std::string jsClassName = transformClassName(fullName);
 
     std::stringstream os;
 
@@ -28,15 +198,16 @@ std::string MakeJsDoc::makeClassDoc(const GAnyClass &clazz)
     os << " * @class " << fullName << "\n"
         << " * @namespace " << dumpObj["nameSpace"].toString() << "\n"
         << " **/\n"
-        << "class " << fullName;
+        << "class " << jsClassName;
 
     if (dumpObj.contains("parents") && dumpObj["parents"].size() > 0) {
-        os  << " extends ";
-        for (size_t i = 0 ; i < dumpObj["parents"].size() ; i++) {
-            if (i > 0) {
-                os << ", ";
+        os << " extends " << transformBaseClassName(dumpObj["parents"][0].toString());
+        if (dumpObj["parents"].size() > 1) {
+            os << " /*";
+            for (size_t i = 1; i < dumpObj["parents"].size(); i++) {
+                os << " also extends " << transformBaseClassName(dumpObj["parents"][i].toString());
             }
-            os << dumpObj["parents"][i].toString();
+            os << " */";
         }
         os << " {";
     } else {
@@ -61,7 +232,7 @@ std::string MakeJsDoc::makeClassDoc(const GAnyClass &clazz)
             os << "     * @static\n";
             os << "     * @readonly\n";
             os << "     **/\n";
-            os << "    " << pName << " = " << v << ";";
+            os << "    static " << transformMemberName(pName) << " = " << toJsLiteral(v) << ";";
         }
 
         for (const auto it = dumpObj["properties"].iterator(); it.hasNext();) {
@@ -79,7 +250,7 @@ std::string MakeJsDoc::makeClassDoc(const GAnyClass &clazz)
                 os << "    /** @property {" << type << "} " << pName << " **/\n";
             }
 
-            os << "    " << pName << ";";
+            os << "    " << transformMemberName(pName) << ";";
         }
 
         for (auto it = dumpObj["methods"].iterator(); it.hasNext();) {
@@ -109,6 +280,7 @@ std::string MakeJsDoc::makeClassDoc(const GAnyClass &clazz)
 
             bool isNewMethod = methodName == "new";
             bool isStatic = isNewMethod || m["isStatic"].toBool();
+            const std::string jsMethodName = transformMemberName(methodName);
 
             auto overloads = m["overloads"];
 
@@ -168,7 +340,10 @@ std::string MakeJsDoc::makeClassDoc(const GAnyClass &clazz)
                 os << "     **/\n";
 
                 os << "    ";
-                os << methodName << "(";
+                if (isStatic) {
+                    os << "static ";
+                }
+                os << jsMethodName << "(";
 
                 int32_t index = 0;
                 for (auto argIt = args.iterator(); argIt.hasNext();) {
@@ -186,10 +361,12 @@ std::string MakeJsDoc::makeClassDoc(const GAnyClass &clazz)
                     }
 
                     if (key == "...") {
-                        key = "...args";
+                        os << "...args";
+                        index++;
+                        continue;
                     }
 
-                    os << key;
+                    os << toJsParameterIdentifier(key);
                     index++;
                 }
                 os << ") {}";
@@ -203,13 +380,116 @@ std::string MakeJsDoc::makeClassDoc(const GAnyClass &clazz)
 
 std::string MakeJsDoc::makeFunctionDoc(const GAnyFunction &func)
 {
-    return "";
+    std::stringstream os;
+    GAny dumpObj = func.dump();
+    if (!dumpObj.isObject() || !dumpObj.contains("overloads")) {
+        return "";
+    }
+
+    std::string functionName = dumpObj["name"].toString();
+    functionName = toJsIdentifier(transformMethodName(functionName));
+    if (functionName.empty()) {
+        return "";
+    }
+
+    auto overloads = dumpObj["overloads"];
+    for (auto it = overloads.iterator(); it.hasNext();) {
+        const auto &ovi = it.next().second;
+        if (!ovi.isObject()) {
+            continue;
+        }
+
+        const auto &args = ovi["args"];
+
+        os << "/**\n";
+        if (ovi.contains("doc") && ovi["doc"] != "") {
+            os << transformDocString(ovi["doc"].toString(), " * ") << "\n";
+        }
+
+        for (auto argIt = args.iterator(); argIt.hasNext();) {
+            const auto &arg = argIt.next().second;
+            if (!arg.isObject()) {
+                break;
+            }
+
+            std::string key = arg["key"].toString();
+            std::string type = arg["type"].toString();
+            if (key == "...") {
+                key = "args";
+                type = "...any";
+            }
+            type = transformType(type);
+            os << " * @param {" << type << "} " << key << "\n";
+        }
+
+        if (ovi.contains("return")) {
+            std::string returnValue = transformType(ovi["return"].toString());
+            if (!returnValue.empty() && returnValue != "undefined") {
+                os << " * @returns {" << returnValue << "}\n";
+            }
+        }
+
+        os << " **/\n"
+            << "function " << functionName << "(";
+
+        int32_t index = 0;
+        for (auto argIt = args.iterator(); argIt.hasNext();) {
+            const auto &arg = argIt.next().second;
+            if (!arg.isObject()) {
+                break;
+            }
+            std::string key = arg["key"].toString();
+            if (index > 0) {
+                os << ", ";
+            }
+            if (key == "...") {
+                os << "...args";
+                index++;
+                continue;
+            }
+            os << toJsParameterIdentifier(key);
+            index++;
+        }
+        os << ") {}\n";
+    }
+
+    return os.str();
+}
+
+std::string MakeJsDoc::transformClassName(const std::string &name)
+{
+    return toJsIdentifier(name);
+}
+
+std::string MakeJsDoc::transformBaseClassName(const std::string &name)
+{
+    return toJsIdentifier(name, "TemplateBase_");
+}
+
+std::string MakeJsDoc::transformMemberName(const std::string &name)
+{
+    if (name.empty()) {
+        return "_";
+    }
+
+    if (!isIdentifierStart(name[0]) || isReservedWord(name)) {
+        return "[" + escapeJsString(name) + "]";
+    }
+    for (size_t i = 1; i < name.size(); ++i) {
+        if (!isIdentifierPart(name[i])) {
+            return "[" + escapeJsString(name) + "]";
+        }
+    }
+    return name;
 }
 
 std::string MakeJsDoc::transformType(const std::string &type)
 {
     GString sType = type;
     sType = sType.toLower();
+    sType = sType.replace("const ", "").replace("&", "").replace("*", "");
+    const std::string normalizedType = trimString(sType.toStdString());
+    sType = normalizedType;
 
     if (sType.indexOf("function") >= 0) {
         return "function|GAnyUserObject";
@@ -229,7 +509,7 @@ std::string MakeJsDoc::transformType(const std::string &type)
     if (sType.indexOf(" ") >= 0) {
         return "";
     }
-    if (sType == "GAny") {
+    if (sType == "gany" || sType == "any") {
         return "any";
     }
     if (sType == "void" || sType == "undefined") {

@@ -23,6 +23,12 @@ public:
     std::string makeFunctionDoc(const GAnyFunction &func) override;
 
 private:
+    static std::string transformClassName(const std::string &name);
+
+    static std::string transformBaseClassName(const std::string &name);
+
+    static std::string transformMemberName(const std::string &name);
+
     static std::string transformType(const std::string &type);
 
     static std::string transformMethodName(const std::string &name);
