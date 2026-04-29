@@ -111,6 +111,7 @@ class CppTypesInfoGen
 {
 public:
     static TypesInfo parse(const std::string &sourceCode);
+    static void resetTemplateDefinitions();
 
 private:
     struct TagItem

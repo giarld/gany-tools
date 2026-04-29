@@ -76,6 +76,8 @@ Use the following documentation tags in C++ header files to mark types that need
 - `@template_type [name = type]` - Instantiate a reflected template class, e.g. `@template_type Vec3f = Vector<float, 3>`; declared members are reused for every template instance
 - `@enum [name]` - Mark enum for reflection. Supports `enum`, `enum class`, `DEF_ENUM*`, and `DEF_ENUM_FLAGS*`
 - `@inherit [name]` - Specify base class inheritance (multiple allowed)
+- Template base classes may be defined in other headers passed to the same `autoany` run; generated code reuses template base members and expands the template base's own non-template parents onto the derived class.
+- When a template class inherits another template class, keep the template angle brackets in `@inherit` even if no concrete arguments are written, for example `@inherit BBoxBase<>`; otherwise it is treated as a normal base class and template base members are not reused.
 - `@cast_to [type]` - Enum value needs type conversion to specified type
 - `@cpp_name [name]` - List the C++ type name of the enum class
 

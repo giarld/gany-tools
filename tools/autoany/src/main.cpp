@@ -294,6 +294,18 @@ int main(int argc, char *argv[])
         inputFileLists.push_back(f);
     }
 
+    CppTypesInfoGen::resetTemplateDefinitions();
+    for (GFile &file: inputFileLists) {
+        if (!file.open(GFile::ReadOnly)) {
+            LogE("Failed to open source file: {}", file.absoluteFilePath());
+            return EXIT_FAILURE;
+        }
+
+        const std::string source = file.readAll().toStdString();
+        file.close();
+        CppTypesInfoGen::parse(source);
+    }
+
     std::vector<FileReflecInfo> fileReflecInfos;
     for (GFile &file: inputFileLists) {
         FileReflecInfo info{};

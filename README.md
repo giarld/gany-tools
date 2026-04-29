@@ -76,6 +76,8 @@ autoany -m "Gx" -b "include/gx" -p "gx/" -o "./gx/toany/" \
 - `@template_type [name = type]` - 实例化一个模板反射类，例如 `@template_type Vec3f = Vector<float, 3>`；模板类内声明的成员会复用于每个实例
 - `@enum [name]` - 标记枚举需要反射，支持 `enum`、`enum class`、`DEF_ENUM*` 和 `DEF_ENUM_FLAGS*`
 - `@inherit [name]` - 指定类继承的基类（可多个）
+- 模板基类可以定义在同一次 `autoany` 输入的其他头文件中；生成器会复用模板基类成员，并把模板基类自身的非模板父类继承展开到派生类上。
+- 模板类继承模板类时，即使不在 `@inherit` 中写具体模板参数，也必须保留模板尖括号，例如 `@inherit BBoxBase<>`；否则会被识别为普通基类，模板基类成员不会被复用。
 - `@cast_to [type]` - 枚举值需要类型转换到指定类型
 - `@cpp_name [name]` - 列出枚举类的 C++ 类型名称
 

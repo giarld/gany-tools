@@ -17,6 +17,8 @@
 #include "gx/debug.h"
 
 
+static std::unordered_map<std::string, std::shared_ptr<ClassInfo>> sTemplateDefinitions;
+
 static std::string trim(const std::string &str)
 {
     const size_t first = str.find_first_not_of(" \t\r\n");
@@ -200,6 +202,35 @@ static void mixinTemplateBaseMembers(ClassInfo &cls, const ClassInfo &templateBa
             cls.funcs.push_back(clonedFunc);
         }
     }
+}
+
+static void expandTemplateBaseInheritance(ClassInfo &cls,
+                                          const std::unordered_map<std::string, std::shared_ptr<ClassInfo>> &templateDefinitions,
+                                          std::unordered_set<std::string> &resolving)
+{
+    std::vector<std::string> expandedParents;
+    for (const auto &parent: cls.parents) {
+        const std::string baseName = templateBaseName(parent);
+        const auto templateIt = templateDefinitions.find(baseName);
+        if (templateIt == templateDefinitions.end()) {
+            appendUnique(expandedParents, parent);
+            continue;
+        }
+
+        auto &templateBase = templateIt->second;
+        const std::string templateKey = classFullCppName(*templateBase);
+        if (!resolving.contains(templateKey)) {
+            resolving.insert(templateKey);
+            expandTemplateBaseInheritance(*templateBase, templateDefinitions, resolving);
+            resolving.erase(templateKey);
+        }
+
+        mixinTemplateBaseMembers(cls, *templateBase, parent);
+        for (const auto &templateParent: templateBase->parents) {
+            appendUnique(expandedParents, templateParent);
+        }
+    }
+    cls.parents = std::move(expandedParents);
 }
 
 template<typename TTagItem>
@@ -491,6 +522,11 @@ TypesInfo CppTypesInfoGen::parse(const std::string &sourceCode)
     const auto parsedItems = parseCommentBlocks(commentBlocks);
     auto classes = assembleTypesInfo(parsedItems);
     return classes;
+}
+
+void CppTypesInfoGen::resetTemplateDefinitions()
+{
+    sTemplateDefinitions.clear();
 }
 
 std::string CppTypesInfoGen::stripDefaultValue(const std::string &param)
@@ -1239,24 +1275,22 @@ TypesInfo CppTypesInfoGen::assembleTypesInfo(const std::vector<ParsedItem> &pars
         }
     }
 
-    std::unordered_map<std::string, std::shared_ptr<ClassInfo>> templateDefinitions;
+    std::unordered_map<std::string, std::shared_ptr<ClassInfo>> templateDefinitions = sTemplateDefinitions;
     for (const auto &cls: classes) {
         if (cls->isTemplateDefinition) {
             templateDefinitions[cls->name] = cls;
             templateDefinitions[cls->cppName] = cls;
             templateDefinitions[classFullCppName(*cls)] = cls;
+            sTemplateDefinitions[cls->name] = cls;
+            sTemplateDefinitions[cls->cppName] = cls;
+            sTemplateDefinitions[classFullCppName(*cls)] = cls;
         }
     }
 
     for (const auto &cls: classes) {
-        if (!cls->isTemplateDefinition) {
-            for (const auto &parent: cls->parents) {
-                const std::string baseName = templateBaseName(parent);
-                const auto templateIt = templateDefinitions.find(baseName);
-                if (templateIt != templateDefinitions.end()) {
-                    mixinTemplateBaseMembers(*cls, *templateIt->second, parent);
-                }
-            }
+        if (!cls->isTemplateDefinition || !cls->templateTypes.empty()) {
+            std::unordered_set<std::string> resolving;
+            expandTemplateBaseInheritance(*cls, templateDefinitions, resolving);
         }
 
         if (cls->templateTypes.empty() && !cls->isTemplateDefinition) {
